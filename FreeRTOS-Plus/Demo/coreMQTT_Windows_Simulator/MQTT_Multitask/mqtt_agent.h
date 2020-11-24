@@ -77,51 +77,14 @@
  * in scope until the associated command is processed, and its callback called.
  * The command callback will set the `xIsComplete` flag, and notify the calling task.
  */
-typedef struct CommandContext
-{
-    MQTTPublishInfo_t * pxPublishInfo;
-    MQTTSubscribeInfo_t * pxSubscribeInfo;
-    size_t ulSubscriptionCount;
-    MQTTStatus_t xReturnStatus;
-    bool xIsComplete;
-
-    /* The below fields are specific to this FreeRTOS implementation. */
-    TaskHandle_t xTaskToNotify;
-    uint32_t ulNotificationBit;
-    QueueHandle_t pxResponseQueue;
-} CommandContext_t;
+struct CommandContext;
+typedef struct CommandContext CommandContext_t;
 
 /**
  * @brief Callback function called when a command completes.
  */
-typedef void (* CommandCallback_t )( CommandContext_t * );
-
-/**
- * @brief A type of command for interacting with the MQTT API.
- */
-typedef enum CommandType
-{
-    PROCESSLOOP, /**< @brief Call MQTT_ProcessLoop(). */
-    PUBLISH,     /**< @brief Call MQTT_Publish(). */
-    SUBSCRIBE,   /**< @brief Call MQTT_Subscribe(). */
-    UNSUBSCRIBE, /**< @brief Call MQTT_Unsubscribe(). */
-    PING,        /**< @brief Call MQTT_Ping(). */
-    DISCONNECT,  /**< @brief Call MQTT_Disconnect(). */
-    INITIALIZE,  /**< @brief Assign an agent to an MQTT Context. */
-    FREE,        /**< @brief Remove a mapping from an MQTT Context to the agent. */
-    TERMINATE    /**< @brief Exit the command loop and stop processing commands. */
-} CommandType_t;
-
-/**
- * @brief A command for interacting with the MQTT API.
- */
-typedef struct Command
-{
-    CommandType_t xCommandType;
-    CommandContext_t * pxCmdContext;
-    CommandCallback_t vCallback;
-    MQTTContext_t * pMqttContext;
-} Command_t;
+typedef void (* CommandCallback_t )( CommandContext_t *,
+                                     MQTTStatus_t );
 
 /**
  * @brief An element for a task's response queue for received publishes.
@@ -191,7 +154,8 @@ bool MQTTAgent_Subscribe( MQTTContext_t * pMqttContext,
                           MQTTSubscribeInfo_t * pSubscriptionList,
                           size_t subscriptionCount,
                           CommandContext_t * pContext,
-                          CommandCallback_t cmdCallback );
+                          CommandCallback_t cmdCallback,
+                          void * pResponseQueue );
 
 bool MQTTAgent_Unsubscribe( MQTTContext_t * pMqttContext,
                             MQTTSubscribeInfo_t * pSubscriptionList,
@@ -227,5 +191,7 @@ bool MQTTAgent_Register( MQTTContext_t * pMqttContext,
 bool MQTTAgent_Free( MQTTContext_t * pMqttContext,
                      CommandContext_t * pContext,
                      CommandCallback_t cmdCallback );
+
+bool MQTTAgent_CreateCommandQueue( const UBaseType_t uxCommandQueueLength );
 
 #endif /* MQTT_AGENT_H */

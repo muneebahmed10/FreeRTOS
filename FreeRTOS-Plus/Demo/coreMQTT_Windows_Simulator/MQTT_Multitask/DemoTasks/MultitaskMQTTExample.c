@@ -240,6 +240,22 @@
 
 /*-----------------------------------------------------------*/
 
+struct CommandContext
+{
+    MQTTPublishInfo_t * pxPublishInfo;
+    MQTTSubscribeInfo_t * pxSubscribeInfo;
+    size_t ulSubscriptionCount;
+    MQTTStatus_t xReturnStatus;
+    bool xIsComplete;
+
+    /* The below fields are specific to this FreeRTOS implementation. */
+    TaskHandle_t xTaskToNotify;
+    uint32_t ulNotificationBit;
+    QueueHandle_t pxResponseQueue;
+} CommandContext_t;
+
+/*-----------------------------------------------------------*/
+
 
 /**
  * @brief Initializes an MQTT context, including transport interface and
@@ -407,11 +423,6 @@ static MQTTContext_t globalMqttContext;
  * @brief Global Network context.
  */
 static NetworkContext_t xNetworkContext;
-
-/**
- * @brief Queue for main task to handle MQTT operations.
- */
-extern QueueHandle_t xCommandQueue;
 
 /**
  * @brief Response queue for prvSubscribeTask.
@@ -727,9 +738,10 @@ static void prvMQTTClientSocketWakeupCallback( Socket_t pxSocket )
 
 /*-----------------------------------------------------------*/
 
-static void prvCommandCallback( CommandContext_t * pxContext )
+static void prvCommandCallback( CommandContext_t * pxContext, MQTTStatus_t xReturnStatus )
 {
     pxContext->xIsComplete = true;
+    pxContext->xReturnStatus = xReturnStatus;
 
     if( pxContext->xTaskToNotify != NULL )
     {
@@ -1116,7 +1128,7 @@ static void prvMQTTDemoTask( void * pvParameters )
     ulGlobalEntryTimeMs = prvGetTimeMs();
 
     /* Create command queue for processing MQTT commands. */
-    xCommandQueue = xQueueCreate( mqttexampleCOMMAND_QUEUE_SIZE, sizeof( Command_t ) );
+    xResult = MQTTAgent_CreateCommandQueue( mqttexampleCOMMAND_QUEUE_SIZE );
     /* Create response queues for each task. */
     xSubscriberResponseQueue = xQueueCreate( mqttexamplePUBLISH_QUEUE_SIZE, sizeof( PublishElement_t ) );
 
