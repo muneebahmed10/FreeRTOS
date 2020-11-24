@@ -66,8 +66,6 @@
  */
 #define mqttexampleDEMO_TICKS_TO_WAIT         pdMS_TO_TICKS( 1000 )
 
-#define mqttexamplePOST_SUBSCRIBE_DELAY_MS    400U
-
 /*-----------------------------------------------------------*/
 
 /**

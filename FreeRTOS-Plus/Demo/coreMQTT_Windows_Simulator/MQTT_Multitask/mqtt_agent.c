@@ -109,7 +109,6 @@ typedef struct MQTTAgentContext
     SubscriptionElement_t pSubscriptionList[ SUBSCRIPTIONS_MAX_COUNT ];
     size_t maxSubscriptions;
     MQTTSubscribeInfo_t pResendSubscriptions[ SUBSCRIPTIONS_MAX_COUNT ];
-    CommandContext_t resubscribeContext;
     void * pDefaultResponseQueue;
 } MQTTAgentContext_t;
 
@@ -487,6 +486,7 @@ static MQTTStatus_t prvProcessCommand( Command_t * pxCommand )
     MQTTContext_t * pMQTTContext = pxCommand->pMqttContext;
     MQTTAgentContext_t * pAgentContext = NULL;
     uint32_t i;
+    uint32_t processLoopTimeoutMs = 0UL;
 
     switch( pxCommand->xCommandType )
     {
@@ -495,6 +495,7 @@ static MQTTStatus_t prvProcessCommand( Command_t * pxCommand )
             /* The process loop will run at the end of every command, so we don't
              * need to call it again here. */
             LogDebug( ( "Running Process Loop." ) );
+            processLoopTimeoutMs = pxCommand->uintParam;
             break;
 
         case PUBLISH:
@@ -629,7 +630,7 @@ static MQTTStatus_t prvProcessCommand( Command_t * pxCommand )
      * the MQTT connection still exists. */
     if( ( xStatus == MQTTSuccess ) && ( pMQTTContext != NULL ) && ( pMQTTContext->connectStatus == MQTTConnected ) )
     {
-        xStatus = MQTT_ProcessLoop( pMQTTContext, mqttexamplePROCESS_LOOP_TIMEOUT_MS );
+        xStatus = MQTT_ProcessLoop( pMQTTContext, processLoopTimeoutMs );
     }
 
     return xStatus;
@@ -706,10 +707,10 @@ static void prvHandleSubscriptionAcks( MQTTAgentContext_t * pAgentContext,
 
     pxAckContext = pxAckInfo->xOriginalCommand.pxCmdContext;
     vAckCallback = pxAckInfo->xOriginalCommand.vCallback;
-    pxSubscribeInfo = ( MQTTSubscribeInfo_t * ) xOriginalCommand.pMqttInfoParam;
+    pxSubscribeInfo = ( MQTTSubscribeInfo_t * ) pxAckInfo->xOriginalCommand.pMqttInfoParam;
     pcSubackCodes = pxPacketInfo->pRemainingData + 2U;
 
-    for( i = 0; i < xOriginalCommand.uintParam; i++ )
+    for( i = 0; i < pxAckInfo->xOriginalCommand.uintParam; i++ )
     {
         if( ucPacketType == MQTT_PACKET_TYPE_SUBACK )
         {
@@ -721,7 +722,7 @@ static void prvHandleSubscriptionAcks( MQTTAgentContext_t * pAgentContext,
                 prvAddSubscription( pAgentContext,
                                     pxSubscribeInfo[ i ].pTopicFilter,
                                     pxSubscribeInfo[ i ].topicFilterLength,
-                                    xOriginalCommand.pQueueParam );
+                                    pxAckInfo->xOriginalCommand.pQueueParam );
             }
             else
             {
@@ -778,7 +779,6 @@ void MQTTAgent_EventCallback( MQTTContext_t * pMqttContext,
     configASSERT( pPacketInfo != NULL );
     AckInfo_t xAckInfo;
     uint16_t packetIdentifier = pDeserializedInfo->packetIdentifier;
-    CommandContext_t * pxAckContext = NULL;
     CommandCallback_t vAckCallback = NULL;
     MQTTAgentContext_t * pAgentContext = getAgentFromContext( pMqttContext );
 
@@ -905,7 +905,6 @@ MQTTStatus_t MQTTAgent_ResumeSession( MQTTContext_t * pMqttContext,
     AckInfo_t * pxPendingAcks = pAgentContext->pPendingAcks;
     SubscriptionElement_t * pxSubscriptions = pAgentContext->pSubscriptionList;
     MQTTSubscribeInfo_t * pxResendSubscriptions = pAgentContext->pResendSubscriptions;
-    CommandContext_t * pResubscribeContext = &( pAgentContext->resubscribeContext );
     MQTTPublishInfo_t * pxOriginalPublish = NULL;
 
     /* Resend publishes if session is present. NOTE: It's possible that some
@@ -990,14 +989,11 @@ MQTTStatus_t MQTTAgent_ResumeSession( MQTTContext_t * pMqttContext,
         /* Resubscribe if needed. */
         if( j > 0 )
         {
-            memset( ( void * ) pResubscribeContext, 0x00, sizeof( CommandContext_t ) );
-            pResubscribeContext->pxSubscribeInfo = pxResendSubscriptions;
-            pResubscribeContext->ulSubscriptionCount = j;
-            /* Set to NULL so existing queues will not be overwritten. */
-            pResubscribeContext->pxResponseQueue = NULL;
-            pResubscribeContext->xTaskToNotify = NULL;
-            xCommandCreated = prvCreateCommand( SUBSCRIBE, pResubscribeContext, NULL, &xNewCommand, pMqttContext );
+            xCommandCreated = prvCreateCommand( SUBSCRIBE, NULL, NULL, &xNewCommand, pMqttContext );
             configASSERT( xCommandCreated == true );
+            xNewCommand.pMqttInfoParam = pxResendSubscriptions;
+            xNewCommand.uintParam = j;
+            xNewCommand.pQueueParam = NULL;
             /* Send to the front of the queue so we will resubscribe as soon as possible. */
             xCommandAdded = xQueueSendToFront( xCommandQueue, &xNewCommand, mqttexampleDEMO_TICKS_TO_WAIT );
             configASSERT( xCommandAdded == pdTRUE );
@@ -1116,11 +1112,10 @@ bool MQTTAgent_CreateCommandQueue( const UBaseType_t uxCommandQueueLength )
 {
     static BaseType_t xQueueCreated = pdFALSE;
     BaseType_t xCreateAgent;
-    BaseType_t xResult;
 
     taskENTER_CRITICAL();
     {
-        if( xAgentCreated == pdFALSE )
+        if( xQueueCreated == pdFALSE )
         {
             /* The agent has not been created yet, so try and create it. */
             xCreateAgent = pdTRUE;
